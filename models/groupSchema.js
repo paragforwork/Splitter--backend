@@ -30,7 +30,7 @@ const GroupSchema = new mongoose.Schema({
     required: true
   },
 
-  // PERFORMANCE CACHE: 
+  // PERFORMANCE CACH
   // Stores "Who owes whom" inside this specific group.
   // Updated every time an expense is added.
   // Example: [{ from: UserA, to: UserB, amount: 500 }]

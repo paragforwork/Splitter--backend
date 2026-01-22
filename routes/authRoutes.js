@@ -9,3 +9,4 @@ router.get('/verify', authMiddleware, (req, res) => {
 });
 
 module.exports = router;
+    

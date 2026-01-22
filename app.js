@@ -5,7 +5,7 @@ dotenv.config();
 const cors = require('cors');
 const connectDB = require('./config/db.js');
 const authRoutes = require('./routes/authRoutes');
-
+const groupRoutes = require('./routes/groupRoutes');
 app.use(cors());
 app.use(express.json());
 
@@ -18,5 +18,6 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/groups', groupRoutes);
 
 module.exports = app;
