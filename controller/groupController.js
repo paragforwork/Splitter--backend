@@ -1,6 +1,6 @@
 const Group = require('../models/groupSchema');
 const User = require('../models/userSchema');
-
+const Expense = require('../models/expenseSchema');
 /**
  * @desc    Create a new group
  * @route   POST /api/groups
@@ -57,6 +57,54 @@ exports.createGroup = async (req, res) => {
     }
 };
 
+
+exports.joinGroup = async (req, res) => {
+    try {
+        const { shareCode } = req.body;
+        const userId = req.user._id;
+        if(!shareCode || !shareCode.trim()){
+            return res.status(400).json({
+                success:false,
+                message:"Share code is required"
+            });
+        }
+        const group=await Group.findOne({shareCode:shareCode.trim().toUpperCase()});
+        if(!group){
+            return res.status(404).json({
+                success:false,
+                message:"Invalid share code. Group not found"
+            });
+        }
+        const isAlreadyMember=group.members.some(
+            member=>member.toString()===userId.toString()
+        );
+        if(isAlreadyMember){
+            return res.status(400).json({
+                success:false,
+                message:"You are already a member of this group"
+            });
+        }
+        group.members.push(userId);
+        await group.save();
+        await User.findByIdAndUpdate(userId,{
+            $push:{groups:group._id}
+        });
+
+        res.status(200).json({
+            success:true,
+            message:"Joined group successfully",
+            groupId:group._id
+        });
+    } catch (error) {
+        console.error("Error joining group:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: "Server error. Please try again later." 
+        });
+    }
+    
+};
+
 /**
  * @desc    Get all groups for the logged-in user
  * @route   GET /api/groups
@@ -95,45 +143,57 @@ exports.getGroups = async (req, res) => {
 exports.getGroup = async (req, res) => {
     try {
         const { id } = req.params;
-        const userId = req.user._id;
-
-        // Find group and populate member details
-        const group = await Group.findById(id)
-            .populate('members', 'name email avatar')
-            .populate('createdBy', 'name email');
-
-        if (!group) {
-            return res.status(404).json({ 
-                success: false, 
-                message: "Group not found" 
+        const UserId=req.user._id.toString();
+        const group=await Group.findById(id)
+        .populate('members', 'name email avatar')
+        .populate('createdBy', 'name email');
+        if(!group){
+            return res.status(404).json({
+                success:false,
+                message:"Group not found"
             });
         }
-
-        // Check if user is a member of the group
-        const isMember = group.members.some(
-            member => member._id.toString() === userId.toString()
+        const isMember=group.members.some(
+            member=>member._id.toString()===UserId
         );
-
-        if (!isMember) {
-            return res.status(403).json({ 
-                success: false, 
-                message: "You are not a member of this group" 
+        if(!isMember){
+            return res.status(403).json({
+                success:false,
+                message:"You are not a member of this group"
             });
         }
+         let balance=0;
+         if(group.simplyfyDebts && group.simplifyDebts.length>0){
+            group.simplifyDebts.forEach(debt =>{
+                if (debt.from.toString()===UserId){
+                    balance -=debt.amount;
 
-        res.status(200).json({ 
-            success: true, 
-            group 
+                }
+                if(debt.to.toString()===UserId){
+                    balance +=debt.amount;
+                }
+            });
+         }
+         const expenses = await Expense.find({ group: id })
+            .populate('paidBy', 'name avatar') // Who paid?
+            .populate('shares.user', 'name')   // <--- NEW: Need names for the split details
+            .sort({ date: -1 });
+        res.status(200).json({
+            success:true,
+            group:{
+                ...group.toObject(),
+                myBalance:balance
+            },
+            expenses:expenses
         });
+         
 
     } catch (error) {
         console.error("Error fetching group:", error);
-        res.status(500).json({ 
-            success: false, 
-            message: "Server error. Please try again later." 
-        });
+        res.status(500).json({ success: false, message: "Server error" });
     }
 };
+
 
 /**
  * @desc    Update group details (name, type)

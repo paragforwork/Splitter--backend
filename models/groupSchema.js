@@ -29,6 +29,12 @@ const GroupSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  shareCode: {
+    type: String,
+    unique: true,
+    // Automatically generate a random 6-character code (e.g., "X7P9K2")
+    default: () => Math.random().toString(36).substring(2, 8).toUpperCase()
+  },
 
   // PERFORMANCE CACH
   // Stores "Who owes whom" inside this specific group.
