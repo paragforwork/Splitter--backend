@@ -113,6 +113,7 @@ exports.joinGroup = async (req, res) => {
 exports.getGroups = async (req, res) => {
     try {
         const userId = req.user._id;
+        const currentUserId = userId.toString();
 
         // Find all groups where user is a member
         const groups = await Group.find({ members: userId })
@@ -120,10 +121,27 @@ exports.getGroups = async (req, res) => {
             .populate('createdBy', 'name email')
             .sort({ createdAt: -1 });
 
+        const groupsWithBalance = groups.map((group) => {
+            let myBalance = 0;
+            (group.simplifyDebts || []).forEach((debt) => {
+                const fromId = debt.from?.toString?.() || '';
+                const toId = debt.to?.toString?.() || '';
+                const amount = Number(debt.amount || 0);
+                if (!amount) return;
+                if (fromId === currentUserId) myBalance -= amount;
+                if (toId === currentUserId) myBalance += amount;
+            });
+
+            return {
+                ...group.toObject(),
+                myBalance: Math.round(myBalance * 100) / 100
+            };
+        });
+
         res.status(200).json({ 
             success: true, 
-            groups,
-            count: groups.length
+            groups: groupsWithBalance,
+            count: groupsWithBalance.length
         });
 
     } catch (error) {
@@ -145,7 +163,7 @@ exports.getGroup = async (req, res) => {
         const { id } = req.params;
         const UserId=req.user._id.toString();
         const group=await Group.findById(id)
-        .populate('members', 'name email avatar')
+        .populate('members', 'name email avatar upi_id')
         .populate('createdBy', 'name email');
         if(!group){
             return res.status(404).json({
@@ -163,7 +181,7 @@ exports.getGroup = async (req, res) => {
             });
         }
          let balance=0;
-         if(group.simplyfyDebts && group.simplifyDebts.length>0){
+         if(group.simplifyDebts && group.simplifyDebts.length>0){
             group.simplifyDebts.forEach(debt =>{
                 if (debt.from.toString()===UserId){
                     balance -=debt.amount;
@@ -191,6 +209,147 @@ exports.getGroup = async (req, res) => {
     } catch (error) {
         console.error("Error fetching group:", error);
         res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+/**
+ * @desc    Get all members for a group with quick stats
+ * @route   GET /api/groups/:id/members
+ * @access  Private (Group members only)
+ */
+exports.getGroupMembers = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const currentUserId = req.user._id.toString();
+
+        const group = await Group.findById(id)
+            .populate('members', 'name email avatar')
+            .populate('createdBy', 'name email');
+
+        if (!group) {
+            return res.status(404).json({ success: false, message: "Group not found" });
+        }
+
+        const isMember = group.members.some((member) => member._id.toString() === currentUserId);
+        if (!isMember) {
+            return res.status(403).json({ success: false, message: "You are not a member of this group" });
+        }
+
+        const memberIds = group.members.map((member) => member._id);
+        const paidCounts = await Expense.aggregate([
+            { $match: { group: group._id, paidBy: { $in: memberIds } } },
+            { $group: { _id: '$paidBy', count: { $sum: 1 }, totalPaid: { $sum: '$amount' } } }
+        ]);
+
+        const paidMap = new Map(paidCounts.map((row) => [row._id.toString(), row]));
+
+        const members = group.members.map((member) => {
+            const paidStat = paidMap.get(member._id.toString());
+            let netInGroup = 0;
+            (group.simplifyDebts || []).forEach((debt) => {
+                const from = debt.from?.toString?.() || debt.from?._id?.toString?.();
+                const to = debt.to?.toString?.() || debt.to?._id?.toString?.();
+                const amount = Number(debt.amount || 0);
+                if (!amount) return;
+                if (from === member._id.toString()) netInGroup -= amount;
+                if (to === member._id.toString()) netInGroup += amount;
+            });
+
+            return {
+                id: member._id,
+                name: member.name,
+                email: member.email,
+                avatar: member.avatar,
+                expensesPaidCount: paidStat?.count || 0,
+                totalPaid: Math.round(Number(paidStat?.totalPaid || 0) * 100) / 100,
+                netInGroup: Math.round(netInGroup * 100) / 100
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            group: { id: group._id, name: group.name, type: group.type },
+            members
+        });
+    } catch (error) {
+        console.error("Error fetching group members:", error);
+        res.status(500).json({ success: false, message: "Server error while fetching group members" });
+    }
+};
+
+/**
+ * @desc    Get a member's transactions in a group
+ * @route   GET /api/groups/:id/members/:memberId/transactions
+ * @access  Private (Group members only)
+ */
+exports.getMemberTransactions = async (req, res) => {
+    try {
+        const { id, memberId } = req.params;
+        const currentUserId = req.user._id.toString();
+
+        const group = await Group.findById(id).populate('members', 'name email avatar');
+        if (!group) {
+            return res.status(404).json({ success: false, message: "Group not found" });
+        }
+
+        const isRequesterMember = group.members.some((member) => member._id.toString() === currentUserId);
+        if (!isRequesterMember) {
+            return res.status(403).json({ success: false, message: "You are not a member of this group" });
+        }
+
+        const targetMember = group.members.find((member) => member._id.toString() === memberId);
+        if (!targetMember) {
+            return res.status(404).json({ success: false, message: "Member not found in this group" });
+        }
+
+        const expenses = await Expense.find({
+            group: id,
+            $or: [{ paidBy: memberId }, { 'shares.user': memberId }]
+        })
+            .populate('paidBy', 'name avatar')
+            .populate('shares.user', 'name avatar')
+            .sort({ date: -1 });
+
+        const transactions = expenses.map((expense) => {
+            const paidByMember = expense.paidBy?._id?.toString() === memberId;
+            const share = expense.shares.find((s) => s.user?._id?.toString() === memberId);
+            return {
+                id: expense._id,
+                description: expense.description,
+                amount: expense.amount,
+                date: expense.date,
+                isSettlement: expense.isSettlement,
+                paidBy: expense.paidBy,
+                memberShare: Number(share?.owedAmount || 0),
+                paidByMember,
+                split: expense.shares.map((s) => ({
+                    user: s.user,
+                    owedAmount: s.owedAmount,
+                    paidAmount: s.paidAmount
+                }))
+            };
+        });
+
+        const summary = transactions.reduce((acc, item) => {
+            if (item.paidByMember) acc.totalPaid += Number(item.amount || 0);
+            acc.totalShare += Number(item.memberShare || 0);
+            return acc;
+        }, { totalPaid: 0, totalShare: 0 });
+
+        summary.totalPaid = Math.round(summary.totalPaid * 100) / 100;
+        summary.totalShare = Math.round(summary.totalShare * 100) / 100;
+        summary.net = Math.round((summary.totalPaid - summary.totalShare) * 100) / 100;
+
+        res.status(200).json({
+            success: true,
+            group: { id: group._id, name: group.name },
+            member: { id: targetMember._id, name: targetMember.name, email: targetMember.email, avatar: targetMember.avatar },
+            summary,
+            transactions
+        });
+    } catch (error) {
+        console.error("Error fetching member transactions:", error);
+        res.status(500).json({ success: false, message: "Server error while fetching member transactions" });
     }
 };
 

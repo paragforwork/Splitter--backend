@@ -37,6 +37,10 @@ const UserSchema = new mongoose.Schema({
     // Example: "rahul@okhdfcbank"
     // Used when someone clicks "Pay" on this user's profile
   },
+  upiVerified: {
+    type: Boolean,
+    default: false
+  },
   
   // 3. APP DATA & CACHING
   groups: [{ 
@@ -55,6 +59,10 @@ const UserSchema = new mongoose.Schema({
     default: null 
     // The "Push Notification ID" from Capacitor 
     // Used to send alerts like: "Rahul added an expense"
+  },
+  notificationEnabled: {
+    type: Boolean,
+    default: true
   }
 
 }, { 

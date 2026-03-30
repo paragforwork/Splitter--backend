@@ -1,20 +1,58 @@
 const User = require('../models/userSchema');
 const generateToken = require('../utils/generateToken');
 const { OAuth2Client } = require('google-auth-library');
+const fs = require('fs');
+const path = require('path');
 
 // Initialize the Google Client
-// Make sure GOOGLE_CLIENT_ID is in your .env file
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const client = new OAuth2Client();
+
+const readAndroidClientIds = () => {
+    try {
+        const filePath = path.resolve(__dirname, '../../app/android/app/google-services.json');
+        if (!fs.existsSync(filePath)) return [];
+        const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const clients = Array.isArray(json?.client) ? json.client : [];
+        const ids = clients.flatMap((c) => (Array.isArray(c?.oauth_client) ? c.oauth_client : []))
+            .map((c) => c?.client_id)
+            .filter(Boolean);
+        return [...new Set(ids)];
+    } catch {
+        return [];
+    }
+};
+
+const getAllowedClientIds = () => {
+    const csvIds = String(process.env.GOOGLE_CLIENT_IDS || '')
+        .split(',')
+        .map((v) => v.trim())
+        .filter(Boolean);
+    const envSingle = process.env.GOOGLE_CLIENT_ID ? [process.env.GOOGLE_CLIENT_ID.trim()] : [];
+    const androidFileIds = readAndroidClientIds();
+    return [...new Set([...csvIds, ...envSingle, ...androidFileIds])];
+};
 
 // Unified authentication: handles both signup and login
 exports.authenticate = async (req, res) => {
     const { token } = req.body;
     
     try {
+        if (!token) {
+            return res.status(400).json({ success: false, message: 'Google token is required' });
+        }
+
+        const allowedClientIds = getAllowedClientIds();
+        if (allowedClientIds.length === 0) {
+            return res.status(500).json({
+                success: false,
+                message: 'Google auth is not configured. Set GOOGLE_CLIENT_ID/GOOGLE_CLIENT_IDS.'
+            });
+        }
+
         // 1. Verify the Google Token
         const ticket = await client.verifyIdToken({
             idToken: token,
-            audience: process.env.GOOGLE_CLIENT_ID,
+            audience: allowedClientIds,
         });
         
         // 2. Extract user info from the payload
@@ -51,7 +89,17 @@ exports.authenticate = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("Authentication Error:", error);
+        const message = String(error?.message || '');
+        console.error("Authentication Error:", message);
+        if (message.toLowerCase().includes('wrong recipient')) {
+            return res.status(401).json({
+                success: false,
+                message: 'Google token audience mismatch. Add correct OAuth client IDs in backend config.'
+            });
+        }
+        if (message.toLowerCase().includes('token used too late') || message.toLowerCase().includes('token expired')) {
+            return res.status(401).json({ success: false, message: 'Google token expired. Try again.' });
+        }
         res.status(500).json({ success: false, message: 'Server Error during authentication' });
     }
 };

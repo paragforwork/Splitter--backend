@@ -11,6 +11,11 @@ const ExpenseSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  splitType: {
+    type: String,
+    enum: ['equal', 'exact', 'percentage'],
+    default: 'equal'
+  },
   date: {
     type: Date,
     default: Date.now
@@ -52,6 +57,16 @@ const ExpenseSchema = new mongoose.Schema({
   receiptUrl: {
     type: String,
     default: null
+  },
+  transactionRef: {
+    type: String,
+    default: null,
+    index: true
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'success', 'failed', 'cancelled', 'manual'],
+    default: 'pending'
   }
 
 }, { timestamps: true });

@@ -1,13 +1,14 @@
 const http=require('http');
 const app=require('./app');
 const port=process.env.PORT||3000;  
+const host=process.env.HOST||'0.0.0.0';
 
 
 const server=http.createServer(app);
 
 
-server.listen(port,()=>{
-    console.log(`Server is running on port ${port}`);
+server.listen(port,host,()=>{
+    console.log(`Server is running on ${host}:${port}`);
 });
 
 
